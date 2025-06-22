@@ -1,174 +1,125 @@
 'use strict';
-const bodyParser = require('body-parser')
 const mongoose = require('mongoose');
-mongoose.connect(process.env.MONGO_URI);
+
+mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true });
 
 const issueSchema = new mongoose.Schema({
-    project: String,
-    assigned_to: String, 
-    status_text: String, 
-    open: Boolean, 
-    issue_title: String, 
-    issue_text: String, 
-    created_by: String, 
-    created_on: Date, 
-    updated_on: Date
-})
+  project: String,
+  assigned_to: String,
+  status_text: String,
+  open: { type: Boolean, default: true },
+  issue_title: { type: String, required: true },
+  issue_text: { type: String, required: true },
+  created_by: { type: String, required: true },
+  created_on: Date,
+  updated_on: Date
+});
 
-const IssueModel = mongoose.model('Issue', issueSchema)
+const IssueModel = mongoose.model('Issue', issueSchema);
 
 module.exports = function (app) {
   app.route('/api/issues/:project')
-    
-    .get(function (req, res){
-      let project = req.params.project
-      
-      const queries = req.query
-      if (queries._id) {
-        queries.id = queries._id
+
+    // GET: View all issues for a project, with optional filters
+    .get(async function (req, res) {
+      const project = req.params.project;
+      const query = { project, ...req.query };
+
+      if (query.open === 'true') query.open = true;
+      if (query.open === 'false') query.open = false;
+
+      try {
+        const issues = await IssueModel.find(query).select('-__v');
+        res.json(issues);
+      } catch (err) {
+        res.status(500).json({ error: 'server error' });
       }
-      const queryKeys = Object.keys(queries)
-          
-      IssueModel.find({project: project}, (err, data) => {
-        
-        let filteredData = data
-        
-        for (let n = 0; n < queryKeys.length; n++) {
-          if (queryKeys[n] === "_id") {
-            continue
-          }
-          
-          if (queries[queryKeys[n]] === "true") {
-            queries[queryKeys[n]] = true
-          }
-          if (queries[queryKeys[n]] === "false") {
-            queries[queryKeys[n]] = false
-          }
-          
-          filteredData = filteredData.filter(issue => issue[queryKeys[n]] === queries[queryKeys[n]])
-
-        }
-
-        res.json(filteredData.map(issue => ({
-          assigned_to: issue.assigned_to || "", 
-          status_text: issue.status_text || "", 
-          open: issue.open, 
-          _id: issue._id, 
-          issue_title: issue.issue_title, 
-          issue_text: issue.issue_text, 
-          created_by: issue.created_by, 
-          created_on: issue.created_on,
-          updated_on: issue.updated_on})))
-        })
-      })
-      
-    
-    
-    .post(function (req, res) {
-      let project = req.params.project;
-      if (!req.body.issue_title || !req.body.issue_text || !req.body.created_by) {
-        res.json({ error: 'required field(s) missing' })
-      } else {
-        const newIssue = new IssueModel({
-          project: project,
-          assigned_to: req.body.assigned_to, 
-          status_text: req.body.status_text, 
-          open: true, 
-          issue_title: req.body.issue_title, 
-          issue_text: req.body.issue_text, 
-          created_by: req.body.created_by, 
-          created_on: new Date(), 
-          updated_on: new Date()
-          })
-
-          newIssue.save((err, data) => {
-           if (err) return console.error(err)
-           res.send({status_text: req.body.status_text || "", 
-                    assigned_to: data.assigned_to || "", 
-                    open: data.open, _id: data._id, 
-                    issue_title: data.issue_title, 
-                    issue_text: data.issue_text, 
-                    created_by: data.created_by, 
-                    created_on: data.created_on, 
-                    updated_on: data.updated_on})
-        })
-        
-
-    }})        
-  
-      
-
-    
-    .put(function (req, res){
-      let project = req.params.project;
-      
-      if (!req.body._id) {
-        res.json({ error: 'missing _id' })
-        return
-      }
-
-      let fieldNums = 0
-      for (const key in req.body) {
-          if (req.body[key]) {
-            fieldNums++
-          }
-        }
-      
-      if (fieldNums < 2) {
-        res.json({ error: 'no update field(s) sent', '_id': req.body._id })
-        return
-      }
-      
-
-      IssueModel.findById({_id: req.body._id}, (err, data) => {
-    
-        if (err) {
-          res.json({ error: 'could not update', '_id': req.body._id })
-          return console.error(err)
-        }
-        
-        if (!data) {
-            res.json({ error: 'could not update', '_id': req.body._id })
-            return
-        }
-        
-        for (const key in req.body) {
-          if (req.body[key]) {
-            data[key] = req.body[key]
-          }
-        }
-        data.updated_on = new Date()
-        data.save((err, data) => {
-          if (err) return console.error(err);
-          res.json({  result: 'successfully updated', '_id': req.body._id })
-       })
-      })
     })
-    
-    .delete(function (req, res) {
-      let project = req.params.project;
-      
-      if (!req.body._id) {
-        res.json({ error: 'missing _id' })
-        return
-      }
-      
-      IssueModel.findByIdAndRemove({_id: req.body._id}, (err, data) => {
 
-        if (!data) {
-          res.json({ error: 'could not delete', '_id': req.body._id })
-          return
-        }
-        
-        if (err) {
-          console.error(err)
-          res.json({ error: 'could not delete', '_id': req.body._id })
-          return
-        }
-        
-        res.json({ result: 'successfully deleted', '_id': req.body._id })
-        return
-       })
+    // POST: Create a new issue
+    .post(async function (req, res) {
+      const project = req.params.project;
+      const { issue_title, issue_text, created_by, assigned_to, status_text } = req.body;
+
+      if (!issue_title || !issue_text || !created_by) {
+        return res.json({ error: 'required field(s) missing' });
+      }
+
+      const newIssue = new IssueModel({
+        project,
+        issue_title,
+        issue_text,
+        created_by,
+        assigned_to: assigned_to || '',
+        status_text: status_text || '',
+        open: true,
+        created_on: new Date(),
+        updated_on: new Date()
       });
-    
+
+      try {
+        const savedIssue = await newIssue.save();
+        const { _id, created_on, updated_on } = savedIssue;
+
+        res.json({
+          _id,
+          issue_title,
+          issue_text,
+          created_by,
+          assigned_to: savedIssue.assigned_to,
+          status_text: savedIssue.status_text,
+          open: savedIssue.open,
+          created_on,
+          updated_on
+        });
+      } catch (err) {
+        res.status(500).json({ error: 'could not create issue' });
+      }
+    })
+
+    // PUT: Update an existing issue
+    .put(async function (req, res) {
+      const { _id, ...updates } = req.body;
+
+      if (!_id) return res.json({ error: 'missing _id' });
+
+      // Filter out empty update fields
+      const fieldsToUpdate = {};
+      for (const key in updates) {
+        if (updates[key] !== '') {
+          fieldsToUpdate[key] = updates[key];
+        }
+      }
+
+      if (Object.keys(fieldsToUpdate).length === 0) {
+        return res.json({ error: 'no update field(s) sent', _id });
+      }
+
+      fieldsToUpdate.updated_on = new Date();
+
+      try {
+        const updated = await IssueModel.findByIdAndUpdate(_id, fieldsToUpdate, { new: true });
+        if (!updated) return res.json({ error: 'could not update', _id });
+
+        res.json({ result: 'successfully updated', _id });
+      } catch (err) {
+        res.json({ error: 'could not update', _id });
+      }
+    })
+
+    // DELETE: Delete an issue by ID
+    .delete(async function (req, res) {
+      const { _id } = req.body;
+
+      if (!_id) return res.json({ error: 'missing _id' });
+
+      try {
+        const deleted = await IssueModel.findByIdAndDelete(_id);
+        if (!deleted) return res.json({ error: 'could not delete', _id });
+
+        res.json({ result: 'successfully deleted', _id });
+      } catch (err) {
+        res.json({ error: 'could not delete', _id });
+      }
+    });
 };
